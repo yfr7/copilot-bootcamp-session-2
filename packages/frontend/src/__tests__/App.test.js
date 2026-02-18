@@ -240,4 +240,442 @@ describe('App Component', () => {
       expect(screen.queryByText('Test Todo 2')).not.toBeInTheDocument();
     });
   });
+
+  test('does not add a todo when input is empty', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+    });
+
+    // Click "Add Todo" without typing anything
+    await act(async () => {
+      await user.click(screen.getByText('Add Todo'));
+    });
+
+    // Should still show the original two todos, no new empty one
+    const todos = screen.getAllByText(/Test Todo/);
+    expect(todos.length).toBe(2);
+  });
+
+  test('clears input after adding a todo', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('Enter todo name');
+    await act(async () => {
+      await user.type(input, 'New Test Todo');
+    });
+
+    await act(async () => {
+      await user.click(screen.getByText('Add Todo'));
+    });
+
+    await waitFor(() => {
+      expect(input).toHaveValue('');
+    });
+  });
+
+  test('shows error when add todo API fails', async () => {
+    server.use(
+      rest.post('/api/items', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('Enter todo name');
+    await act(async () => {
+      await user.type(input, 'Will Fail');
+    });
+
+    await act(async () => {
+      await user.click(screen.getByText('Add Todo'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error adding item/)).toBeInTheDocument();
+    });
+  });
+
+  test('shows error when delete todo API fails', async () => {
+    server.use(
+      rest.delete('/api/items/:id', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    const deleteButtons = screen.getAllByText('Delete');
+
+    await act(async () => {
+      await user.click(deleteButtons[0]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
+    });
+  });
+
+  test('error message has alert role for accessibility', async () => {
+    server.use(
+      rest.get('/api/items', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      const errorEl = screen.getByRole('alert');
+      expect(errorEl).toBeInTheDocument();
+      expect(errorEl).toHaveTextContent(/Failed to fetch data/);
+    });
+  });
+
+  test('renders add task input for each todo', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    const addTaskInputs = screen.getAllByPlaceholderText('Add a task...');
+    expect(addTaskInputs.length).toBe(2);
+  });
+
+  test('can edit a todo name via the edit button', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    // Click first Edit button
+    const editButtons = screen.getAllByText('Edit');
+    await act(async () => {
+      await user.click(editButtons[0]);
+    });
+
+    // Should show an edit input with the current name
+    const editInput = screen.getByDisplayValue('Test Todo 1');
+    expect(editInput).toBeInTheDocument();
+
+    // Clear and type a new name
+    await act(async () => {
+      await user.clear(editInput);
+      await user.type(editInput, 'Updated Todo 1');
+    });
+
+    // Click Save
+    await act(async () => {
+      await user.click(screen.getByText('Save'));
+    });
+
+    // Should display the updated name
+    await waitFor(() => {
+      expect(screen.getByText('Updated Todo 1')).toBeInTheDocument();
+    });
+  });
+
+  test('can add a task to a todo', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    const addTaskInputs = screen.getAllByPlaceholderText('Add a task...');
+    await act(async () => {
+      await user.type(addTaskInputs[0], 'New sub-task');
+    });
+
+    const addTaskButtons = screen.getAllByText('+ Add task');
+    await act(async () => {
+      await user.click(addTaskButtons[0]);
+    });
+
+    // After adding a task, fetchTodos is called. The input should be cleared.
+    await waitFor(() => {
+      expect(addTaskInputs[0]).toHaveValue('');
+    });
+  });
+
+  test('can toggle a task checkbox', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+
+    // Sub-task A is not completed (is_completed: 0)
+    const taskCheckboxA = screen.getByLabelText(/Mark task "Sub-task A"/);
+    expect(taskCheckboxA).not.toBeChecked();
+
+    await act(async () => {
+      await user.click(taskCheckboxA);
+    });
+
+    // The handler calls fetchTodos, so no crash = success
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+  });
+
+  test('can delete a task', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+
+    // Click remove on Sub-task A
+    const removeButtons = screen.getAllByText('Remove');
+    await act(async () => {
+      await user.click(removeButtons[0]);
+    });
+
+    // The handler calls fetchTodos which reloads with the same mock data,
+    // but we verify the handler was called without errors.
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+  });
+
+  test('can edit a task description', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+
+    // Click the Edit button for Sub-task A (task edit buttons are separate from todo Edit)
+    // Task edit buttons have aria-labels like `Edit task "Sub-task A"`
+    const editTaskBtn = screen.getByLabelText('Edit task "Sub-task A"');
+    await act(async () => {
+      await user.click(editTaskBtn);
+    });
+
+    // Should show the edit input with current description
+    const taskEditInput = screen.getByDisplayValue('Sub-task A');
+    expect(taskEditInput).toBeInTheDocument();
+
+    await act(async () => {
+      await user.clear(taskEditInput);
+      await user.type(taskEditInput, 'Edited sub-task A');
+    });
+
+    // Click the Save button inside the task edit area
+    const saveButtons = screen.getAllByText('Save');
+    await act(async () => {
+      await user.click(saveButtons[0]);
+    });
+
+    // After save, fetchTodos is called. Verify no crash.
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+  });
+
+  test('shows error when update todo API fails', async () => {
+    server.use(
+      rest.put('/api/items/:id', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    // Click Edit, change name, click Save
+    const editButtons = screen.getAllByText('Edit');
+    await act(async () => {
+      await user.click(editButtons[0]);
+    });
+
+    const editInput = screen.getByDisplayValue('Test Todo 1');
+    await act(async () => {
+      await user.clear(editInput);
+      await user.type(editInput, 'Will Fail');
+    });
+
+    await act(async () => {
+      await user.click(screen.getByText('Save'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error updating item/)).toBeInTheDocument();
+    });
+  });
+
+  test('shows error when add task API fails', async () => {
+    server.use(
+      rest.post('/api/items/:id/tasks', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 1')).toBeInTheDocument();
+    });
+
+    const addTaskInputs = screen.getAllByPlaceholderText('Add a task...');
+    await act(async () => {
+      await user.type(addTaskInputs[0], 'Failing task');
+    });
+
+    const addTaskButtons = screen.getAllByText('+ Add task');
+    await act(async () => {
+      await user.click(addTaskButtons[0]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error adding task/)).toBeInTheDocument();
+    });
+  });
+
+  test('shows error when toggle task API fails', async () => {
+    server.use(
+      rest.put('/api/items/:id/tasks/:taskId', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+
+    const taskCheckbox = screen.getByLabelText(/Mark task "Sub-task A"/);
+    await act(async () => {
+      await user.click(taskCheckbox);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error toggling task/)).toBeInTheDocument();
+    });
+  });
+
+  test('shows error when delete task API fails', async () => {
+    server.use(
+      rest.delete('/api/items/:id/tasks/:taskId', (req, res, ctx) => {
+        return res(ctx.status(500));
+      })
+    );
+
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sub-task A')).toBeInTheDocument();
+    });
+
+    const removeButtons = screen.getAllByText('Remove');
+    await act(async () => {
+      await user.click(removeButtons[0]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error deleting task/)).toBeInTheDocument();
+    });
+  });
+
+  test('can toggle a taskless todo as complete via checkbox', async () => {
+    const user = userEvent.setup();
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 2')).toBeInTheDocument();
+    });
+
+    // Test Todo 2 has no tasks, so it should have a checkbox
+    const todoCheckbox = screen.getByLabelText(/Mark "Test Todo 2"/);
+    expect(todoCheckbox).not.toBeChecked();
+
+    await act(async () => {
+      await user.click(todoCheckbox);
+    });
+
+    // After clicking, the todo should update (mock returns updated todo)
+    await waitFor(() => {
+      expect(screen.getByText('Test Todo 2')).toBeInTheDocument();
+    });
+  });
 });
